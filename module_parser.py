@@ -148,9 +148,9 @@ class ModuleParser:
             optimizer.optimize_and_display(modules, target_category, top_n=20)
             
             # 模组筛选完成后自动退出程序
-            self.logger.info("=== 模组筛选完成，准备退出程序 ===")
-            import os
-            os._exit(0)
+            # self.logger.info("=== 模组筛选完成，准备退出程序 ===")
+            # import os
+            # os._exit(0)
             
         except ImportError as e:
             self.logger.warning(f"无法导入模组优化器: {e}")
