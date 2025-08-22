@@ -139,7 +139,8 @@ class ModuleParser:
             category_map = {
                 "攻击": ModuleCategory.ATTACK,
                 "守护": ModuleCategory.GUARDIAN,
-                "辅助": ModuleCategory.SUPPORT
+                "辅助": ModuleCategory.SUPPORT,
+                "全部": ModuleCategory.All
             }
             
             target_category = category_map.get(category, ModuleCategory.ATTACK)

@@ -134,6 +134,11 @@ class ModuleOptimizer:
         
         # 1. 按类型过滤模组
         filtered_modules = [m for m in modules if self.get_module_category(m) == category]
+        if category.value=="全部":
+            filtered_modules=modules
+
+
+
         self.logger.info(f"找到 {len(filtered_modules)} 个 {category.value} 类型模组")
         
         if len(filtered_modules) < 4:

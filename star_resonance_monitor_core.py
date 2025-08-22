@@ -57,20 +57,22 @@ class StarResonanceMonitor:
     def start_monitoring(self):
         """开始监控"""
         self.is_running = True
-        self.stats['start_time'] = time.time()
-
-        self._log("=== 星痕共鸣监控器启动 ===")
-        self._log(f"模组类型: {self.category}")
+        self.stats['start_time'] = time.time() 
+        self._log("=== 星痕共鸣模组监控器启动 by 伊咪塔 \n")
+        self._log("=== 本程序开源地址： https://github.com/amoeet/StarResonanceAutoMod \n")
+        self._log("=== 原脚本代码开源地址 https://github.com/fudiyangjin/StarResonanceAutoMod \n")
+        self._log("=== 原DPS网络抓包开源地址 https://github.com/dmlgzs/StarResonanceDamageCounter \n")
+        self._log(f"模组类型: {self.category}\n")
         if self.attributes:
-            self._log(f"属性筛选: {', '.join(self.attributes)}")
+            self._log(f"属性筛选: {', '.join(self.attributes)}\n")
         else:
-            self._log("属性筛选: 无 (将解析所有符合类型的模组)")
-        self._log(f"网络接口名称: {self.interface_name}")
+            self._log("属性筛选: 无 (将解析所有符合类型的模组)\n")
+        self._log(f"网络接口名称: {self.interface_name}\n")
 
         # 启动抓包
         self.packet_capture.start_capture(self._on_sync_container_data)
-        self._log("监控已启动，请重新登录游戏并选择角色...")
-        self._log("当模组数据被捕获和解析后，结果会显示在这里。")
+        self._log("监控已启动，请重新登录游戏并选择角色...\n")
+        self._log("当模组数据被捕获和解析后，结果会显示在这里。\n")
 
 
     def stop_monitoring(self):
