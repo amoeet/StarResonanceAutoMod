@@ -1,3 +1,22 @@
+感谢前面的大佬开源，稍微优化了一下
+追加了UI界面，优化了筛选逻辑，打包了个.exe，win平台可以直接下载使用。
+
+
+
+<img width="802" height="637" alt="304a4a2391d605941d724dc7328b02e3" src="https://github.com/user-attachments/assets/3a59f1ab-dfbe-4884-8176-95ad023b566f" />
+
+
+
+
+
+
+
+
+
+
+
+
+
 # 星痕共鸣模组全自动筛选工具
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-brightgreen.svg)](https://www.gnu.org/licenses/agpl-3.0.txt)
