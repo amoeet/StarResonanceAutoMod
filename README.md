@@ -1,15 +1,14 @@
 感谢前面的大佬开源，稍微优化了一下
 追加了UI界面，优化了筛选逻辑，打包了个.exe，win平台可以直接下载使用。
+新增全模组筛选和预设筛选设置
 
 
-
-<img width="802" height="637" alt="304a4a2391d605941d724dc7328b02e3" src="https://github.com/user-attachments/assets/3a59f1ab-dfbe-4884-8176-95ad023b566f" />
-
-
+ 
 
 
 
 
+<img width="802" height="687" alt="QQ_1755867396812" src="https://github.com/user-attachments/assets/6a07e29b-339e-4382-9fcb-cacf26c3209d" />
 
 
 
