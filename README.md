@@ -13,7 +13,11 @@ V2.3 新增全模组筛选和预设筛选设置。
 如果对筛选后的结果不满意，可以随时修改筛选和模组类型，然后点击重新筛选来获得推荐结果，无需反复换线。
 
 
-<img width="802" height="687" alt="QQ_1756128490691" src="https://github.com/user-attachments/assets/90ea3320-7fb1-402b-8bfa-5c62e07f179c" />
+
+<img width="818" height="1330" alt="QQ_1756129382460" src="https://github.com/user-attachments/assets/07199474-9b03-48dd-8189-ae52718da0ea" />
+
+
+ 
 
  算法优化了筛选和推荐，
  如果出现供能核心等级效果一样的组合，会只保留最高分的那个。
