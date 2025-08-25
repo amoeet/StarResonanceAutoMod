@@ -1,97 +1,107 @@
-"""
-核心逻辑模块
-"""
+# star_resonance_monitor_core.py
+
 import logging
 import time
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Callable
 
-# 假设这些模块与原始文件在同一目录下
-from logging_config import setup_logging, get_logger
+from logging_config import get_logger
 from module_parser import ModuleParser
+from module_optimizer import ModuleOptimizer, ModuleCategory
 from packet_capture import PacketCapture
-from network_interface_util import get_network_interfaces
 
-# 获取日志器
 logger = get_logger(__name__)
-
 
 class StarResonanceMonitor:
     """星痕共鸣监控器"""
 
-    def __init__(self, interface_name: str, category: str = "攻击", attributes: List[str] = None, log_callback=None):
-        """
-        初始化监控器
-
-        Args:
-            interface_name: 选定的网络接口名称 (e.g., 'eth0')
-            category: 模组类型（攻击/守护/辅助）
-            attributes: 要筛选的属性词条列表
-            log_callback: 用于将日志消息传递给GUI的回调函数
-        """
+    def __init__(self, interface_name: str, category: str = "攻击", attributes: List[str] = None, 
+                 on_data_captured_callback: Optional[Callable] = None):
         self.interface_name = interface_name
-        self.category = category
-        self.attributes = attributes or []
-        self.is_running = False
-        self.log_callback = log_callback
-
-        # 初始化组件
-        self.packet_capture = PacketCapture(self.interface_name)
-        self.module_parser = ModuleParser() # 将回调传递给解析器
-
-        # 统计数据
-        self.stats = {
-            'start_time': None
-        }
-
-    def _log(self, message: str, level: str = 'info'):
-        """通过回调记录日志，以便在GUI中显示"""
-        if self.log_callback:
-            self.log_callback(message)
+        self.initial_category = category
+        self.initial_attributes = attributes or []
+        self.on_data_captured_callback = on_data_captured_callback
         
-        # 也可以同时记录到文件
-        if level == 'info':
-            logger.info(message)
-        elif level == 'error':
-            logger.error(message)
+        self.is_running = False
+        self.captured_modules: Optional[List[Any]] = None
+
+        self.packet_capture = PacketCapture(self.interface_name)
+        self.module_parser = ModuleParser()
+        self.module_optimizer = ModuleOptimizer()
 
     def start_monitoring(self):
-        """开始监控"""
         self.is_running = True
-        self.stats['start_time'] = time.time() 
-        self._log("=== 星痕共鸣模组监控器启动 by 伊咪塔 \n")
-        self._log("=== 本程序开源地址： https://github.com/amoeet/StarResonanceAutoMod \n")
-        self._log("=== 原脚本代码开源地址 https://github.com/fudiyangjin/StarResonanceAutoMod \n")
-        self._log("=== 原DPS网络抓包开源地址 https://github.com/dmlgzs/StarResonanceDamageCounter \n")
-        self._log(f"模组类型: {self.category}\n")
-        if self.attributes:
-            self._log(f"属性筛选: {', '.join(self.attributes)}\n")
+        print("=== 星痕共鸣模组监控器启动 by 伊咪塔 \n")
+        print("=== 本程序开源地址： https://github.com/amoeet/StarResonanceAutoMod \n")
+        # ... (其他启动日志)
+        print(f"初始模组类型: {self.initial_category}\n")
+        if self.initial_attributes:
+            print(f"初始属性筛选: {', '.join(self.initial_attributes)}\n")
         else:
-            self._log("属性筛选: 无 (将解析所有符合类型的模组)\n")
-        self._log(f"网络接口名称: {self.interface_name}\n")
+            print("初始属性筛选: 无\n")
+        print(f"网络接口名称: {self.interface_name}\n")
 
-        # 启动抓包
         self.packet_capture.start_capture(self._on_sync_container_data)
-        self._log("监控已启动，请重新登录游戏并选择角色...\n")
-        self._log("当模组数据被捕获和解析后，结果会显示在这里。\n")
-
+        print("监控已启动，请重新登录游戏并选择角色...\n")
 
     def stop_monitoring(self):
-        """停止监控"""
         if not self.is_running:
             return
         self.is_running = False
         self.packet_capture.stop_capture()
-        self._log("=== 监控已停止 ===")
+        print("=== 监控已停止 ===")
 
     def _on_sync_container_data(self, data: Dict[str, Any]):
-        """处理SyncContainerData数据包"""
         try:
             v_data = data.get('v_data')
             if v_data:
-                # 解析模组信息
-                self.module_parser.parse_module_info(v_data, category=self.category, attributes=self.attributes)
-        except Exception as e:
-            self._log(f"处理数据包失败: {e}", level='error')
+                print("捕获到模组数据，开始解析...")
+                # 解析模组并存储，不再直接触发优化
+                all_modules = self.module_parser.parse_module_info(v_data)
+                
+                if all_modules:
+                    # 仅在第一次捕获时存储数据并触发回调
+                    if self.captured_modules is None:
+                        self.captured_modules = all_modules
+                        print(f"成功解析并存储 {len(self.captured_modules)} 个模组。")
+                        
+                        # 执行初始筛选
+                        self.rescreen_modules(self.initial_category, self.initial_attributes)
+                        
+                        # 通知GUI启用“重新筛选”按钮
+                        if self.on_data_captured_callback:
+                            self.on_data_captured_callback()
+                    else:
+                        print("已捕获模组数据，忽略后续数据包。如需更新请重启监控。")
+                else:
+                    print("数据包中未找到有效的模组信息。")
 
-# 注意：原始的 main() 函数和 argparse 部分已被移除
-# GUI 应用将负责处理用户输入和启动监控器
+        except Exception as e:
+            logger.error(f"处理数据包失败: {e}")
+
+    def has_captured_data(self) -> bool:
+        """检查是否已捕获并存储了模组数据"""
+        return self.captured_modules is not None
+
+    def rescreen_modules(self, category: str, attributes: List[str]):
+        """使用新的筛选条件对已捕获的数据进行重新优化"""
+        if not self.has_captured_data():
+            print("错误：没有可供重新筛选的模组数据。")
+            return
+
+        print(f"\n--- 开始使用新条件重新筛选 ---")
+        print(f"模组类型: {category}")
+        print(f"优先属性: {', '.join(attributes) if attributes else '无'}")
+        
+        category_map = {
+            "攻击": ModuleCategory.ATTACK, "守护": ModuleCategory.GUARDIAN,
+            "辅助": ModuleCategory.SUPPORT, "全部": ModuleCategory.All
+        }
+        target_category = category_map.get(category, ModuleCategory.All)
+        
+        # 直接调用优化器
+        self.module_optimizer.optimize_and_display(
+            self.captured_modules, 
+            target_category, 
+            top_n=20, 
+            prioritized_attrs=attributes
+        )

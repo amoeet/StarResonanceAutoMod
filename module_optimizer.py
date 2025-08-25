@@ -1,274 +1,346 @@
-"""
-模组搭配优化器
-"""
+# module_optimizer.py
 
 import logging
+import os
+import random
 from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass
-from itertools import combinations
-# from logging_config import get_logger # 假设您有此配置文件
+from logging_config import get_logger
 from module_types import (
     ModuleInfo, ModuleType, ModuleAttrType, ModuleCategory,
-    MODULE_CATEGORY_MAP, ATTR_THRESHOLDS
+    MODULE_CATEGORY_MAP, ATTR_THRESHOLDS, BASIC_ATTR_POWER_MAP, SPECIAL_ATTR_POWER_MAP,
+    TOTAL_ATTR_POWER_MAP, BASIC_ATTR_IDS, SPECIAL_ATTR_IDS, ATTR_NAME_TYPE_MAP
 )
 
 # 获取日志器
-# logger = get_logger(__name__)
-# 替换为基本日志记录以确保可独立运行
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s')
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+
+# --- 属性分类定义 ---
+PHYSICAL_ATTRIBUTES = {"力量加持", "敏捷加持", "攻速专注"}
+MAGIC_ATTRIBUTES = {"智力加持", "施法专注"}
+ATTACK_ATTRIBUTES = {"特攻伤害", "精英打击", "力量加持", "敏捷加持", "智力加持"}
+GUARDIAN_ATTRIBUTES = {"抵御魔法", "抵御物理"}
+SUPPORT_ATTRIBUTES = {"特攻治疗加持", "专精治疗加持"}
 
 
 @dataclass
-class ModuleCombination:
-    """模组搭配组合
-    
-    Attributes:
-        modules: 模组列表
-        total_attr_value: 总属性值 (根据阈值计算)
-        attr_breakdown: 属性分布字典，键为属性名称，值为属性数值
-        threshold_level: 达到的最高属性等级 (0-5)
-        score: 综合评分（数值越大越好）
-    """
+class ModuleSolution:
+    """模组搭配解"""
     modules: List[ModuleInfo]
-    total_attr_value: int
-    attr_breakdown: Dict[str, int]  # 属性名称 -> 原始总值
-    threshold_level: int  # 组合中出现的最高属性等级
-    score: float  # 综合评分
+    score: float
+    attr_breakdown: Dict[str, int]
+    optimization_score: float = 0.0
 
 
 class ModuleOptimizer:
     """模组搭配优化器"""
     
     def __init__(self):
+        """初始化模组搭配优化器"""
         self.logger = logger
+        self._result_log_file = None
+        self.local_search_iterations = 30
+        self.max_solutions = 60
+        self.prefilter_top_n_per_attr = 30
+        self.prefilter_top_n_total_value = 50
+        self.local_search_sample_size = 40
+        # +++ 新增：多种子生成的数量 +++
+        self.num_greedy_seeds = 5 # 每次尝试生成5个种子，并从中择优
+
+    def _get_current_log_file(self) -> Optional[str]:
+        try:
+            root_logger = logging.getLogger()
+            for handler in root_logger.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    return handler.baseFilename
+            return None
+        except Exception as e:
+            self.logger.warning(f"无法获取日志文件路径: {e}")
+            return None
+    
+    def _log_result(self, message: str):
+        try:
+            if self._result_log_file is None:
+                self._result_log_file = self._get_current_log_file()
+            
+            if self._result_log_file and os.path.exists(self._result_log_file):
+                with open(self._result_log_file, 'a', encoding='utf-8') as f:
+                    f.write(message + '\n')
+        except Exception as e:
+            self.logger.warning(f"记录筛选结果失败: {e}")
     
     def get_module_category(self, module: ModuleInfo) -> ModuleCategory:
-        """获取模组类型分类"""
         return MODULE_CATEGORY_MAP.get(module.config_id, ModuleCategory.ATTACK)
     
-    def calculate_total_attr_value(self, modules: List[ModuleInfo]) -> Tuple[int, Dict[str, int]]:
-        """计算模组组合的总属性值 (此方法用于计算用于显示的阈值化总值)"""
-        attr_breakdown = {}
+    def prefilter_modules(self, modules: List[ModuleInfo]) -> List[ModuleInfo]:
+        self.logger.info(f"开始预筛选，原始模组数量: {len(modules)}")
+        if not modules: return []
+
+        candidate_modules = set()
+        attr_modules = {}
         for module in modules:
             for part in module.parts:
                 attr_name = part.name
-                attr_breakdown[attr_name] = attr_breakdown.get(attr_name, 0) + part.value
+                if attr_name not in attr_modules: attr_modules[attr_name] = []
+                attr_modules[attr_name].append((module, part.value))
         
-        total_threshold_value = 0
+        for attr_name, module_values in attr_modules.items():
+            sorted_by_attr = sorted(module_values, key=lambda x: x[1], reverse=True)
+            top_modules = [item[0] for item in sorted_by_attr[:self.prefilter_top_n_per_attr]]
+            candidate_modules.update(top_modules)
+
+        sorted_by_total_value = sorted(modules, key=lambda m: sum(p.value for p in m.parts), reverse=True)
+        top_generalists = sorted_by_total_value[:self.prefilter_top_n_total_value]
+        candidate_modules.update(top_generalists)
+        
+        filtered_modules = list(candidate_modules)
+        self.logger.info(f"预筛选完成，候选池数量: {len(filtered_modules)}")
+        return filtered_modules
+
+    def calculate_combat_power(self, modules: List[ModuleInfo]) -> Tuple[int, Dict[str, int]]:
+        attr_breakdown = {}
+        for module in modules:
+            for part in module.parts:
+                attr_breakdown[part.name] = attr_breakdown.get(part.name, 0) + part.value
+        
+        threshold_power, total_attr_value = 0, sum(attr_breakdown.values())
         for attr_name, attr_value in attr_breakdown.items():
-            threshold_value = 0
-            for threshold in ATTR_THRESHOLDS:
-                if attr_value >= threshold:
-                    threshold_value = threshold
-                else:
-                    break
-            total_threshold_value += threshold_value
+            max_level = sum(1 for threshold in ATTR_THRESHOLDS if attr_value >= threshold)
+            if max_level > 0:
+                attr_type = ATTR_NAME_TYPE_MAP.get(attr_name, "basic")
+                power_map = SPECIAL_ATTR_POWER_MAP if attr_type == 'special' else BASIC_ATTR_POWER_MAP
+                threshold_power += power_map.get(max_level, 0)
         
-        return total_threshold_value, attr_breakdown
+        total_attr_power = TOTAL_ATTR_POWER_MAP.get(total_attr_value, 0)
+        return threshold_power + total_attr_power, attr_breakdown
+    
+    def _preliminary_check(self, module_pool: List[ModuleInfo], prioritized_attrs: Optional[List[str]]) -> bool:
+        if not prioritized_attrs: return True
+        
+        available_attrs = {part.name for module in module_pool for part in module.parts}
+        prioritized_set = set(prioritized_attrs)
+        
+        intersection = available_attrs.intersection(prioritized_set)
+        
+        if len(intersection) < 2:
+            self.logger.warning("="*50)
+            self.logger.warning(">>> 前置检查失败：筛选无法进行！")
+            self.logger.warning(f">>> 原因：在您选择的模组类型中，能找到的用户指定属性不足两种。")
+            self.logger.warning(f">>> 找到的属性: {list(intersection)}")
+            self.logger.warning(">>> 优化已自动跳过。请调整模组类型或筛选属性后重试。")
+            self.logger.warning("="*50)
+            return False
+        return True
 
-    def calculate_combination_score_v2(self, attr_breakdown: Dict[str, int]) -> float:
-        """
-        计算组合的综合评分（V2新算法）。
-        - 强烈奖励达到高阈值 (16, 20) 的属性。
-        - 惩罚属性值超过20的浪费。
-        - 鼓励多个属性达到高等级。
-        """
-        total_score = 0.0
-        
-        # 阈值及其对应的基础分，指数级增长以突出高等级的重要性
-        tier_scores = {20: 100000, 16: 50000, 12: 15000, 8: 5000, 4: 1000, 1: 100}
-        
-        num_high_tier_attrs = 0
+    def _calculate_optimization_score(self, modules: List[ModuleInfo], category: ModuleCategory, 
+                                      prioritized_attrs: Optional[List[str]] = None) -> float:
+        if not modules: return 0.0
 
-        for attr_name, attr_value in attr_breakdown.items():
-            # 1. 计算浪费值 (超过20的部分)
-            waste = max(0, attr_value - 20)
+        attr_breakdown = {}
+        for module in modules:
+            for part in module.parts:
+                attr_breakdown[part.name] = attr_breakdown.get(part.name, 0) + part.value
+        
+        if prioritized_attrs:
+            prioritized_set = set(prioritized_attrs)
+            actual_attrs_set = set(attr_breakdown.keys())
             
-            # 2. 找到达到的最高阈值
-            achieved_threshold = 0
-            for t in sorted(ATTR_THRESHOLDS, reverse=True):
-                if attr_value >= t:
-                    achieved_threshold = t
-                    break
+            if not actual_attrs_set.issubset(prioritized_set): return 0.0
+            if len(actual_attrs_set) < 2: return 0.0
+
+        score = 0.0
+        
+        threshold_score = 0
+        for attr_name, value in attr_breakdown.items():
+            if value >= 20: threshold_score += 1000 + (value - 20) * 20
+            elif value >= 16: threshold_score += 500 + (value - 16) * 15
+            elif value >= 12: threshold_score += 100 + (value - 12) * 5
+        score += threshold_score
+        
+        category_bonus = 0
+        target_attrs = set()
+        if category == ModuleCategory.ATTACK: target_attrs = ATTACK_ATTRIBUTES
+        elif category == ModuleCategory.GUARDIAN: target_attrs = GUARDIAN_ATTRIBUTES
+        elif category == ModuleCategory.SUPPORT: target_attrs = SUPPORT_ATTRIBUTES
+        for attr_name, value in attr_breakdown.items():
+            if attr_name in target_attrs:
+                category_bonus += value * 5
+        score += category_bonus
+
+        physical_sum = sum(v for k, v in attr_breakdown.items() if k in PHYSICAL_ATTRIBUTES)
+        magic_sum = sum(v for k, v in attr_breakdown.items() if k in MAGIC_ATTRIBUTES)
+        if physical_sum > 0 and magic_sum > 0:
+            score -= min(physical_sum, magic_sum) * 10
             
-            # 3. 计算该属性的得分
-            attr_score = 0.0
-            if achieved_threshold > 0:
-                # 基础分
-                attr_score += tier_scores.get(achieved_threshold, 0)
+        score += sum(attr_breakdown.values()) * 0.1
+        return score if score > 0 else 0.0
+
+    def greedy_construct_solution(self, modules: List[ModuleInfo], category: ModuleCategory, prioritized_attrs: Optional[List[str]] = None) -> Optional[Tuple[List[ModuleInfo], float]]:
+        if len(modules) < 4: return None
+        current_modules = [random.choice(modules)]
+        for _ in range(3):
+            candidates = [(m, self._calculate_optimization_score(current_modules + [m], category, prioritized_attrs))
+                          for m in modules if m not in current_modules]
+            if not candidates: break
+            
+            valid_candidates = [c for c in candidates if c[1] > 0]
+            if not valid_candidates: break
+            
+            if random.random() < 0.7:
+                best_module = max(valid_candidates, key=lambda item: item[1])[0]
+            else:
+                top_candidates = sorted(valid_candidates, key=lambda item: item[1], reverse=True)[:5]
+                best_module = random.choice(top_candidates)[0]
+            current_modules.append(best_module)
+            
+        final_opt_score = self._calculate_optimization_score(current_modules, category, prioritized_attrs)
+        return (current_modules, final_opt_score) if final_opt_score > 0 else None
+
+    def local_search_improve(self, initial_modules: List[ModuleInfo], initial_opt_score: float, all_modules: List[ModuleInfo], category: ModuleCategory, prioritized_attrs: Optional[List[str]] = None) -> Tuple[List[ModuleInfo], float]:
+        best_modules, best_opt_score = initial_modules, initial_opt_score
+        for _ in range(self.local_search_iterations):
+            improved_in_iter = False
+            for i in range(len(best_modules)):
+                current_best_module_for_swap, best_score_for_swap = None, best_opt_score
+                sample_size = min(self.local_search_sample_size, len(all_modules))
+                for new_module in random.sample(all_modules, sample_size):
+                    if new_module in best_modules: continue
+                    
+                    new_modules = best_modules[:i] + [new_module] + best_modules[i+1:]
+                    new_opt_score = self._calculate_optimization_score(new_modules, category, prioritized_attrs)
+                    
+                    if new_opt_score > best_score_for_swap:
+                        best_score_for_swap = new_opt_score
+                        current_best_module_for_swap = new_module
+                        improved_in_iter = True
                 
-                # 加上原始属性值作为次要分数，用于区分同阈值下的不同数值 (例如17分优于16分)
-                attr_score += attr_value * 10
-                
-                # 惩罚浪费值，每浪费1点，惩罚力度巨大
-                waste_penalty = waste * 2500
-                attr_score -= waste_penalty
+                if current_best_module_for_swap:
+                    best_modules = best_modules[:i] + [current_best_module_for_swap] + best_modules[i+1:]
+                    best_opt_score = best_score_for_swap
 
-            total_score += attr_score
+            if not improved_in_iter: break
+        return best_modules, best_opt_score
 
-            # 统计达到高等级(>=16)的词条数量
-            if achieved_threshold >= 16:
-                num_high_tier_attrs += 1
+    def optimize_modules(self, modules: List[ModuleInfo], category: ModuleCategory, top_n: int = 40, prioritized_attrs: Optional[List[str]] = None) -> List[ModuleSolution]:
+        self.logger.info(f"开始优化 {category.value} 类型模组搭配")
         
-        # 4. 多高等级属性奖励: 每增加一个高等级词条，都给予额外加分
-        if num_high_tier_attrs > 1:
-            total_score += (num_high_tier_attrs - 1) * 75000
+        if category == ModuleCategory.All: module_pool = modules
+        else: module_pool = [m for m in modules if self.get_module_category(m) == category]
             
-        return total_score
-   
-    def find_optimal_combinations(self, modules: List[ModuleInfo], category: ModuleCategory, top_n: int = 20) -> List[ModuleCombination]:
-        """
-        [修正后] 通过启发式精英池搜索，寻找最优模组搭配。
-        此算法优先考虑那些在特定属性上表现突出的模组，以更大概率找到能凑出高等级词条的组合。
+        if not self._preliminary_check(module_pool, prioritized_attrs): return []
         
-        Args:
-            modules: 所有模组列表
-            category: 目标模组类型（攻击/守护/辅助）
-            top_n: 返回前N个最优组合, 默认20
-            
-        Returns:
-            最优模组组合列表，按新评分系统排序
-        """
-        self.logger.info(f"开始计算 {category.value} 类型模组的最优搭配 (启发式精英池算法)")
-        
-        # 1. 按类型过滤模组
-        filtered_modules = [m for m in modules if self.get_module_category(m) == category]
-        if category.value=="全部":
-            filtered_modules=modules
-
-
-
-        self.logger.info(f"找到 {len(filtered_modules)} 个 {category.value} 类型模组")
-        
-        if len(filtered_modules) < 4:
-            self.logger.warning(f"{category.value} 类型模组数量不足4个, 无法形成搭配")
+        self.logger.info(f"找到 {len(module_pool)} 个 {category.value} 类型模组用于组合")
+        if len(module_pool) < 4:
+            self.logger.warning(f"该类型模组数量不足4个，无法进行优化。")
             return []
         
-        # 2. 按每个独立属性，对模组进行排序，构建“单科状元”列表
-        attr_sorted_modules: Dict[str, List[ModuleInfo]] = {}
-        all_attrs = {part.name for module in filtered_modules for part in module.parts}
+        candidate_modules = self.prefilter_modules(module_pool)
+        if len(candidate_modules) < 4:
+            self.logger.warning(f"预筛选后模组数量不足4个，无法形成有效组合。")
+            return []
 
-        for attr_name in all_attrs:
-            modules_with_attr = []
-            for module in filtered_modules:
-                attr_value = next((part.value for part in module.parts if part.name == attr_name), 0)
-                if attr_value > 0:
-                    modules_with_attr.append((module, attr_value))
-            modules_with_attr.sort(key=lambda x: x[1], reverse=True)
-            attr_sorted_modules[attr_name] = [m[0] for m in modules_with_attr]
+        solutions, seen_combinations = [], set()
+        max_attempts = int(self.max_solutions * 20) # 调整尝试次数
+        for _ in range(max_attempts):
+            if len(solutions) >= self.max_solutions: break
 
-        # 3. 创建精英候选池 (使用字典替代集合来去重)
-        elite_pool_dict: Dict[str, ModuleInfo] = {}
-        
-        # 从每个属性的排序列表顶部挑选模组加入池中，确保“专才”不被埋没
-        num_to_pick_per_attr = 10
-        for sorted_list in attr_sorted_modules.values():
-            for module in sorted_list[:num_to_pick_per_attr]:
-                elite_pool_dict[module.uuid] = module
-        
-        # 如果精英池数量过少，用总属性值高的模组补充，保证组合多样性
-        if len(elite_pool_dict) < 20 and len(filtered_modules) > len(elite_pool_dict):
-            sorted_by_total = sorted(filtered_modules, key=lambda m: sum(p.value for p in m.parts), reverse=True)
-            for module in sorted_by_total:
-                if module.uuid not in elite_pool_dict:
-                    elite_pool_dict[module.uuid] = module
-                if len(elite_pool_dict) >= 20:
-                    break
-        
-        candidate_modules = list(elite_pool_dict.values())
-
-        self.logger.info(f"创建了 {len(candidate_modules)} 个模组的精英候选池进行组合计算")
-        
-        # 4. 从精英池生成组合 (为防止性能问题，可对候选池大小进行限制)
-        if len(candidate_modules) > 40:
-            self.logger.warning(f"精英池过大({len(candidate_modules)})，将截取总属性值最高的前40个")
-            candidate_modules.sort(key=lambda m: sum(p.value for p in m.parts), reverse=True)
-            candidate_modules = candidate_modules[:40]
-
-        combinations_list = list(combinations(candidate_modules, 4))
-        self.logger.info(f"从精英池生成了 {len(combinations_list)} 个4模组组合")
-        
-        # 5. 使用新评分系统评估所有组合
-        module_combinations = []
-        for combo_modules in combinations_list:
-            # 计算原始属性分布
-            _, attr_breakdown = self.calculate_total_attr_value(list(combo_modules))
+            # +++ 优化：多种子择优机制 +++
+            # 1. 生成多个种子
+            greedy_seeds = []
+            for _ in range(self.num_greedy_seeds):
+                seed = self.greedy_construct_solution(candidate_modules, category, prioritized_attrs)
+                if seed:
+                    greedy_seeds.append(seed)
             
-            # 使用新评分函数计算分数
-            score = self.calculate_combination_score_v2(attr_breakdown)
-            
-            # 计算用于显示的阈值化总值
-            total_threshold_value, _ = self.calculate_total_attr_value(list(combo_modules))
-            
-            # 计算组合达到的最高属性等级
-            highest_threshold_level = -1 # 初始化为-1表示无任何等级
-            for value in attr_breakdown.values():
-                level = -1
-                for i, threshold in enumerate(ATTR_THRESHOLDS):
-                    if value >= threshold:
-                        level = i
-                if level > highest_threshold_level:
-                    highest_threshold_level = level
+            # 2. 如果没有找到任何有效种子，则跳过本次尝试
+            if not greedy_seeds:
+                continue
 
-            combination = ModuleCombination(
-                modules=list(combo_modules),
-                total_attr_value=total_threshold_value,
-                attr_breakdown=attr_breakdown,
-                threshold_level=highest_threshold_level,
-                score=score
-            )
-            module_combinations.append(combination)
-        
-        # 6. 按新评分降序排序，返回最佳结果
-        module_combinations.sort(key=lambda x: x.score, reverse=True)
-        return module_combinations[:top_n]
+            # 3. 从多个种子中选出最优的一个作为起点
+            initial_result = max(greedy_seeds, key=lambda item: item[1])
+            
+            # 4. 对这个高质量的起点进行精细的局部搜索
+            improved_modules, improved_opt_score = self.local_search_improve(*initial_result, candidate_modules, category, prioritized_attrs)
+            if improved_opt_score <= 0: continue
 
-    def print_combination_details(self, combination: ModuleCombination, rank: int):
-        """打印组合详细信息"""
-        print(f"\n=== 第{rank}名搭配 ===")
-        # 达到属性等级的描述现在基于最高的单个属性
-        level_desc = f"{ATTR_THRESHOLDS[combination.threshold_level]}点" if combination.threshold_level >= 0 else "无"
-        print(f"最高属性等级: {combination.threshold_level} ({level_desc})")
-        print(f"综合评分: {combination.score:.1f}")
+            module_ids = tuple(sorted([m.uuid for m in improved_modules]))
+            if module_ids not in seen_combinations:
+                seen_combinations.add(module_ids)
+                final_combat_power, attr_breakdown = self.calculate_combat_power(improved_modules)
+                solutions.append(ModuleSolution(improved_modules, final_combat_power, attr_breakdown, improved_opt_score))
         
-        print("\n模组列表:")
-        for i, module in enumerate(combination.modules, 1):
+        solutions.sort(key=lambda x: x.score, reverse=True)
+        
+        unique_solutions = {}
+        for solution in solutions:
+            attrs_ge_20 = tuple(sorted([name for name, value in solution.attr_breakdown.items() if value >= 20]))
+            attrs_ge_16 = tuple(sorted([name for name, value in solution.attr_breakdown.items() if value >= 16]))
+            signature = (attrs_ge_20, attrs_ge_16)
+
+            if signature not in unique_solutions:
+                unique_solutions[signature] = solution
+
+        deduplicated_solutions = list(unique_solutions.values())
+        self.logger.info(f"优化完成，找到 {len(solutions)} 个符合条件的解，去重后剩余 {len(deduplicated_solutions)} 个。")
+
+        return deduplicated_solutions[:top_n]
+
+    def print_solution_details(self, solution: ModuleSolution, rank: int):
+        header = f"\n=== 第 {rank} 名搭配 (优化分: {solution.optimization_score:.2f}) ==="
+        print(header); self._log_result(header)
+        total_value_str = f"总属性值: {sum(solution.attr_breakdown.values())}"
+        print(total_value_str); self._log_result(total_value_str)
+        combat_power_str = f"战斗力: {solution.score}"
+        print(combat_power_str); self._log_result(combat_power_str)
+        print("\n模组列表:"); self._log_result("\n模组列表:")
+        for i, module in enumerate(solution.modules, 1):
             parts_str = ", ".join([f"{p.name}+{p.value}" for p in module.parts])
-            # [修正] 将 uuid 强制转换为字符串再切片，防止其为整数时报错
-            uuid_str = str(module.uuid)
-            print(f"  {i}. {module.name} (品质{module.quality}, UUID:{uuid_str[:6]}) - {parts_str}")
+            module_line = f"  {i}. {module.name} (品质{module.quality}) - {parts_str}"
+            print(module_line); self._log_result(module_line)
+        print("\n属性分布:"); self._log_result("\n属性分布:")
+        for attr_name, value in sorted(solution.attr_breakdown.items()):
+            attr_line = f"  {attr_name}: +{value}"
+            print(attr_line); self._log_result(attr_line)
+
+    def optimize_and_display(self, modules: List[ModuleInfo], category: ModuleCategory = ModuleCategory.All, 
+                           top_n: int = 40, prioritized_attrs: Optional[List[str]] = None):
+        separator = f"\n{'='*50}"
+        print(separator); self._log_result(separator)
+        title = f"模组搭配优化 - {category.value} 类型"
+        print(title); self._log_result(title)
+        print(separator); self._log_result(separator)
         
-        print("\n属性分布 (原始总值):")
-        for attr_name, value in sorted(combination.attr_breakdown.items()):
-            print(f"  {attr_name}: +{value}")
-    
-    def optimize_and_display(self, 
-                           modules: List[ModuleInfo], 
-                           category: ModuleCategory = ModuleCategory.ATTACK,
-                           top_n: int = 20):
-        """优化并显示结果"""
-        print(f"\n{'='*50}")
-        print(f"模组搭配优化 - {category.value}类型")
-        print(f"{'='*50}")
+        optimal_solutions = self.optimize_modules(modules, category, top_n, prioritized_attrs)
         
-        # 调用重构后的主函数
-        optimal_combinations = self.find_optimal_combinations(modules, category, top_n)
-        
-        if not optimal_combinations:
-            print(f"未找到{category.value}类型的有效搭配")
+        if not optimal_solutions:
+            msg = f"未找到符合所有筛选条件的有效搭配。\n提示：请检查筛选属性是否过于苛刻，或模组池中缺少符合要求的模组。"
+            print(msg); self._log_result(msg)
             return
         
-        print(f"\n找到{len(optimal_combinations)}个最优搭配:")
+        found_msg = f"\n找到 {len(optimal_solutions)} 个去重后的最优搭配 (将从末位开始显示，最优解在最后):"
+        print(found_msg); self._log_result(found_msg)
         
-        for i, combination in enumerate(optimal_combinations, 1):
-            self.print_combination_details(combination, i)
+        num_solutions = len(optimal_solutions)
+        for i, solution in enumerate(reversed(optimal_solutions)):
+            rank = num_solutions - i
+            self.print_solution_details(solution, rank)
         
-        print(f"\n{'='*50}")
-        print("统计信息:")
-        print(f"总模组数量: {len(modules)}")
-        print(f"{category.value}类型模组: {len([m for m in modules if self.get_module_category(m) == category])}")
-        if optimal_combinations:
-            print(f"最高分搭配评分: {optimal_combinations[0].score:.1f}")
-            print(f"最高分搭配的最高属性等级: {optimal_combinations[0].threshold_level}")
-        print(f"{'='*50}")
+        print(separator); self._log_result(separator)
+        print("统计信息:"); self._log_result("统计信息:")
+        total_str = f"总模组数量: {len(modules)}"
+        print(total_str); self._log_result(total_str)
+        
+        if category == ModuleCategory.All:
+            category_count = len(modules)
+        else:
+            category_count = len([m for m in modules if self.get_module_category(m) == category])
+        
+        category_str = f"{category.value} 类型模组: {category_count}"
+        print(category_str); self._log_result(category_str)
+        
+        if optimal_solutions:
+            highest_score_str = f"最高战斗力: {optimal_solutions[0].score}"
+            print(highest_score_str); self._log_result(highest_score_str)
+        
+        print(separator); self._log_result(separator)
