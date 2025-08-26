@@ -15,11 +15,13 @@ class StarResonanceMonitor:
     """星痕共鸣监控器"""
 
     def __init__(self, interface_name: str, category: str = "攻击", attributes: List[str] = None, 
-                 on_data_captured_callback: Optional[Callable] = None):
+                 on_data_captured_callback: Optional[Callable] = None,
+                 progress_callback: Optional[Callable[[str], None]] = None): # 添加进度回调
         self.interface_name = interface_name
         self.initial_category = category
         self.initial_attributes = attributes or []
         self.on_data_captured_callback = on_data_captured_callback
+        self.progress_callback = progress_callback # 保存回调函数
         
         self.is_running = False
         self.captured_modules: Optional[List[Any]] = None
@@ -32,7 +34,6 @@ class StarResonanceMonitor:
         self.is_running = True
         print("=== 星痕共鸣模组监控器启动 by 伊咪塔 \n")
         print("=== 本程序开源地址： https://github.com/amoeet/StarResonanceAutoMod \n")
-        # ... (其他启动日志)
         print(f"初始模组类型: {self.initial_category}\n")
         if self.initial_attributes:
             print(f"初始属性筛选: {', '.join(self.initial_attributes)}\n")
@@ -41,7 +42,7 @@ class StarResonanceMonitor:
         print(f"网络接口名称: {self.interface_name}\n")
 
         self.packet_capture.start_capture(self._on_sync_container_data)
-        print("监控已启动，请重新登录游戏并选择角色...\n")
+        print("监控已启动，请换线、重新登录或切换角色以便获取模组信息...\n")
 
     def stop_monitoring(self):
         if not self.is_running:
@@ -55,7 +56,6 @@ class StarResonanceMonitor:
             v_data = data.get('v_data')
             if v_data:
                 print("捕获到模组数据，开始解析...")
-                # 解析模组并存储，不再直接触发优化
                 all_modules = self.module_parser.parse_module_info(v_data)
                 
                 if all_modules:
@@ -74,7 +74,6 @@ class StarResonanceMonitor:
                         print("已捕获模组数据，忽略后续数据包。如需更新请重启监控。")
                 else:
                     print("数据包中未找到有效的模组信息。")
-
         except Exception as e:
             logger.error(f"处理数据包失败: {e}")
 
@@ -98,10 +97,11 @@ class StarResonanceMonitor:
         }
         target_category = category_map.get(category, ModuleCategory.All)
         
-        # 直接调用优化器
+        # 调用优化器，并传递进度回调函数
         self.module_optimizer.optimize_and_display(
             self.captured_modules, 
             target_category, 
             top_n=20, 
-            prioritized_attrs=attributes
+            prioritized_attrs=attributes,
+            progress_callback=self.progress_callback
         )

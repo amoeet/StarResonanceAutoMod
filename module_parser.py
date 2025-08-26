@@ -11,6 +11,16 @@ from module_types import (
 
 logger = get_logger(__name__)
 
+def is_iterable(obj):
+    """辅助函数：检查一个对象是否是可迭代的（但不是字符串）。"""
+    if isinstance(obj, str):
+        return False
+    try:
+        iter(obj)
+        return True
+    except TypeError:
+        return False
+
 class ModuleParser:
     """模组解析器"""
     
@@ -45,8 +55,16 @@ class ModuleParser:
                         parts=[]
                     )
 
-                    mod_parts = list(item.ModNewAttr.ModParts)
-                    init_link_nums = mod_info_details.InitLinkNums
+                    # --- 错误修正开始 ---
+                    # 原始数据可能是一个整数（当只有一个部件时），也可能是一个列表。
+                    # 我们需要统一处理成列表格式。
+                    raw_mod_parts = item.ModNewAttr.ModParts
+                    mod_parts = [raw_mod_parts] if not is_iterable(raw_mod_parts) else list(raw_mod_parts)
+                    
+                    raw_init_link_nums = mod_info_details.InitLinkNums
+                    init_link_nums = [raw_init_link_nums] if not is_iterable(raw_init_link_nums) else list(raw_init_link_nums)
+                    # --- 错误修正结束 ---
+
                     for i, part_id in enumerate(mod_parts):
                         if i < len(init_link_nums):
                             module_info.parts.append(ModulePart(
